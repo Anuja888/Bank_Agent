@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { executeQuery } from '@/lib/db';
 
 // Simple in-memory conversation store (for development only)
+// This will be replaced with database storage
 const conversationStore = new Map();
 
 const systemPrompt = `You are a senior Tata Capital personal loan agent with 15+ years of experience. Your primary role is to professionally guide customers through the complete loan process while systematically collecting all necessary information.
