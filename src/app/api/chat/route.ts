@@ -1,9 +1,49 @@
 import { NextResponse } from 'next/server';
 import { executeQuery } from '@/lib/db';
 
-// Simple in-memory conversation store (for development only)
-// This will be replaced with database storage
+// Session-based conversation storage (in-memory with session isolation)
 const conversationStore = new Map();
+
+async function getConversationHistory(sessionId: string) {
+  try {
+    // Try database first
+    const results = await executeQuery({
+      query: 'SELECT role, content FROM messages WHERE session_id = ? ORDER BY timestamp ASC',
+      values: [sessionId]
+    });
+    
+    return (results as any[]).map(row => ({
+      role: row.role,
+      content: row.content
+    }));
+  } catch (error) {
+    // Fallback to in-memory storage if database fails
+    console.error('Database error, using in-memory storage:', error);
+    return conversationStore.get(sessionId) || [];
+  }
+}
+
+async function saveMessage(sessionId: string, role: string, content: string) {
+  try {
+    // Try database first
+    await executeQuery({
+      query: 'INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
+      values: [sessionId, role, content]
+    });
+  } catch (error) {
+    // Fallback to in-memory storage if database fails
+    console.error('Database error, using in-memory storage:', error);
+    let conversationHistory = conversationStore.get(sessionId) || [];
+    conversationHistory.push({ role, content });
+    
+    // Keep only last 10 messages to prevent memory overflow
+    if (conversationHistory.length > 20) {
+      conversationHistory = conversationHistory.slice(-20);
+    }
+    
+    conversationStore.set(sessionId, conversationHistory);
+  }
+}
 
 const systemPrompt = `You are a senior Tata Capital personal loan agent with 15+ years of experience. Your primary role is to professionally guide customers through the complete loan process while systematically collecting all necessary information.
 
@@ -66,8 +106,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid input: content is required' }, { status: 400 });
     }
 
-    // Get conversation history for this session
-    let conversationHistory = conversationStore.get(sessionId) || [];
+    // Get conversation history for this session from database
+    const conversationHistory = await getConversationHistory(sessionId);
     
     // Build messages array with conversation history
     const messages = [
@@ -106,18 +146,9 @@ export async function POST(req: Request) {
       const aiData = await aiResponse.json();
       botResponse = aiData.choices[0]?.message?.content || 'I apologize, but I encountered an issue processing your request. Please try again.';
       
-      // Update conversation history
-      conversationHistory.push(
-        { role: 'user', content: content },
-        { role: 'assistant', content: botResponse }
-      );
-      
-      // Keep only last 10 messages to prevent memory overflow
-      if (conversationHistory.length > 20) {
-        conversationHistory = conversationHistory.slice(-20);
-      }
-      
-      conversationStore.set(sessionId, conversationHistory);
+      // Save both user message and bot response to database
+      await saveMessage(sessionId, 'user', content);
+      await saveMessage(sessionId, 'assistant', botResponse);
       
     } catch (aiError) {
       console.error('AI API error:', aiError);
@@ -139,6 +170,10 @@ export async function POST(req: Request) {
       } else {
         botResponse = 'As your Tata Capital personal loan specialist, I\'d like to understand your requirements better. May I have your name to begin our personalized discussion?';
       }
+      
+      // Save fallback responses to database as well
+      await saveMessage(sessionId, 'user', content);
+      await saveMessage(sessionId, 'assistant', botResponse);
     }
 
     return NextResponse.json({ message: botResponse, sessionId });

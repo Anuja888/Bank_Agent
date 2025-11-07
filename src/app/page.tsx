@@ -49,6 +49,14 @@ export default function Home() {
 
   const startChat = () => {
     setShowChat(true)
+    // Reset messages to fresh conversation when starting chat
+    setMessages([
+      {
+        id: 1,
+        content: "Hello! I'm your Tata Capital personal loan specialist. May I have your good name to begin our discussion?",
+        username: "bot",
+      }
+    ])
   }
 
   const handleSubmit = async (e: FormEvent) => {
